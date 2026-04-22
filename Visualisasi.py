@@ -15,7 +15,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from wordcloud import WordCloud, STOPWORDS
 
 # =========================
-# SEED FIX (REPRODUCIBLE)
+# REPRODUCIBILITY (PENTING)
 # =========================
 seed = 42
 random.seed(seed)
@@ -23,7 +23,7 @@ np.random.seed(seed)
 os.environ["PYTHONHASHSEED"] = str(seed)
 
 # =========================
-# CONFIG
+# CONFIG STREAMLIT
 # =========================
 st.set_page_config(page_title="Analisis Sentimen Shopee", layout="wide")
 
@@ -40,16 +40,23 @@ uploaded_file = st.sidebar.file_uploader("📁 Upload file CSV/XLSX", type=["csv
 # LOAD DATA
 # =========================
 if uploaded_file:
+
     if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
 
-    # LABEL CLEANING
+    # =========================
+    # CLEAN LABEL
+    # =========================
     df['Labeling'] = df['Labeling'].astype(str).str.strip().str.capitalize()
-    df['Labeling'] = df['Labeling'].apply(lambda x: x if x in ["Positif", "Negatif"] else "Positif")
+    df['Labeling'] = df['Labeling'].apply(
+        lambda x: x if x in ["Positif", "Negatif"] else "Positif"
+    )
 
-    # DATE HANDLING
+    # =========================
+    # DATE PROCESSING
+    # =========================
     if 'Tanggal' in df.columns:
         df['Tanggal'] = pd.to_datetime(df['Tanggal'], errors='coerce')
         df['Tanggal'] = df['Tanggal'].ffill().bfill()
@@ -59,11 +66,13 @@ if uploaded_file:
         df['Tahun'] = 2024
         df['Bulan'] = 1
 
-    bulan_map = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',
-                 7:'Jul',8:'Agu',9:'Sep',10:'Okt',11:'Nov',12:'Des'}
+    bulan_map = {
+        1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',
+        7:'Jul',8:'Agu',9:'Sep',10:'Okt',11:'Nov',12:'Des'
+    }
 
     # =========================
-    # VISUALIZATION PAGE
+    # PAGE 1: VISUALISASI
     # =========================
     if page == "📊 Visualisasi Data & Tren":
 
@@ -73,18 +82,24 @@ if uploaded_file:
         pos = len(df[df['Labeling']=="Positif"])
         neg = len(df[df['Labeling']=="Negatif"])
 
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Total", total)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Ulasan", total)
         c2.metric("Positif", pos)
         c3.metric("Negatif", neg)
 
-        tab1, tab2 = st.tabs(["Trend", "WordCloud"])
+        tab1, tab2 = st.tabs(["Trend Sentimen", "WordCloud"])
 
+        # =========================
+        # TREND
+        # =========================
         with tab1:
-            data = df.groupby(['Tahun','Labeling']).size().reset_index(name='Jumlah')
-            fig = px.bar(data, x="Tahun", y="Jumlah", color="Labeling", barmode="group")
+            trend = df.groupby(['Tahun','Labeling']).size().reset_index(name='Jumlah')
+            fig = px.bar(trend, x="Tahun", y="Jumlah", color="Labeling", barmode="group")
             st.plotly_chart(fig, use_container_width=True)
 
+        # =========================
+        # WORDCLOUD
+        # =========================
         with tab2:
             text = " ".join(df['stemming'].astype(str))
             wc = WordCloud(width=800, height=400, stopwords=STOPWORDS).generate(text)
@@ -93,6 +108,108 @@ if uploaded_file:
             ax.imshow(wc)
             ax.axis("off")
             st.pyplot(fig)
+
+    # =========================
+    # PAGE 2: MODEL
+    # =========================
+    elif page == "⚙️ Perhitungan Algoritma":
+
+        st.title("⚙️ Model Training & Evaluasi")
+
+        tab1, tab2 = st.tabs(["Training Model", "TF-IDF Analysis"])
+
+        # =========================
+        # TRAIN MODEL
+        # =========================
+        with tab1:
+
+            if st.button("🚀 Jalankan Model"):
+
+                # =========================
+                # DATA PREP
+                # =========================
+                X = df['stemming'].fillna("")
+                y = df['Labeling']
+
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X,
+                    y,
+                    test_size=0.2,
+                    random_state=42,
+                    stratify=y
+                )
+
+                # =========================
+                # TF-IDF
+                # =========================
+                tfidf = TfidfVectorizer(max_features=5000)
+                X_train = tfidf.fit_transform(X_train)
+                X_test = tfidf.transform(X_test)
+
+                # =========================
+                # MODELS
+                # =========================
+                models = {
+                    "Random Forest": RandomForestClassifier(
+                        n_estimators=100,
+                        random_state=42
+                    ),
+                    "SVM Linear": SVC(kernel="linear", random_state=42),
+                    "SVM RBF": SVC(kernel="rbf", random_state=42),
+                    "SVM Sigmoid": SVC(kernel="sigmoid", random_state=42)
+                }
+
+                results = []
+
+                # =========================
+                # TRAIN LOOP
+                # =========================
+                for name, model in models.items():
+
+                    model.fit(X_train, y_train)
+                    pred = model.predict(X_test)
+
+                    acc = accuracy_score(y_test, pred)
+                    report = classification_report(y_test, pred, output_dict=True)
+
+                    results.append({
+                        "Model": name,
+                        "Accuracy": acc,
+                        "F1": report["Positif"]["f1-score"]
+                    })
+
+                    st.subheader(name)
+                    st.write("Accuracy:", acc)
+
+                    cm = confusion_matrix(y_test, pred, labels=["Negatif", "Positif"])
+
+                    fig, ax = plt.subplots()
+                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax)
+                    st.pyplot(fig)
+
+                st.dataframe(pd.DataFrame(results))
+
+        # =========================
+        # TF-IDF ANALYSIS
+        # =========================
+        with tab2:
+
+            st.subheader("TF-IDF Analysis")
+
+            X = df['stemming'].fillna("")
+            tfidf = TfidfVectorizer(max_features=20)
+            X_vec = tfidf.fit_transform(X)
+
+            words = tfidf.get_feature_names_out()
+            scores = np.asarray(X_vec.mean(axis=0)).ravel()
+
+            df_tfidf = pd.DataFrame({
+                "Kata": words,
+                "Bobot": scores
+            }).sort_values("Bobot", ascending=False)
+
+            st.dataframe(df_tfidf)
+            st.bar_chart(df_tfidf.set_index("Kata"))
 
     # =========================
     # MODEL PAGE (FIXED)
