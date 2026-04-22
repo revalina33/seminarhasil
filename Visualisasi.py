@@ -3,92 +3,154 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.express as px
+import random
+import os
+
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from wordcloud import WordCloud, STOPWORDS
-import plotly.express as px
 
-# ==============================
-# 1️⃣ Konfigurasi Halaman
-# ==============================
+# =========================
+# SEED FIX (REPRODUCIBLE)
+# =========================
+seed = 42
+random.seed(seed)
+np.random.seed(seed)
+os.environ["PYTHONHASHSEED"] = str(seed)
+
+# =========================
+# CONFIG
+# =========================
 st.set_page_config(page_title="Analisis Sentimen Shopee", layout="wide")
 
 st.sidebar.title("🧭 Navigasi")
-page = st.sidebar.radio("Pilih Halaman:", ["📊 Visualisasi Data & Tren", "⚙️ Perhitungan Algoritma"])
+page = st.sidebar.radio("Pilih Halaman:", [
+    "📊 Visualisasi Data & Tren",
+    "⚙️ Perhitungan Algoritma"
+])
 
-# ==============================
-# 2️⃣ Upload Data
-# ==============================
 st.sidebar.divider()
-uploaded_file = st.sidebar.file_uploader("📁 Upload file ulasan (CSV/Excel)", type=["csv", "xlsx"])
+uploaded_file = st.sidebar.file_uploader("📁 Upload file CSV/XLSX", type=["csv", "xlsx"])
 
+# =========================
+# LOAD DATA
+# =========================
 if uploaded_file:
-    if uploaded_file.name.endswith('.csv'):
+    if uploaded_file.name.endswith(".csv"):
         df = pd.read_csv(uploaded_file)
     else:
         df = pd.read_excel(uploaded_file)
 
-    # --- PERBAIKAN 1: Labeling agar tidak membuang data ---
-    if 'Labeling' in df.columns:
-        df['Labeling'] = df['Labeling'].astype(str).str.strip().str.capitalize()
-        valid_labels = ['Positif', 'Negatif']
-        df['Labeling'] = df['Labeling'].apply(lambda x: x if x in valid_labels else 'Positif')
+    # LABEL CLEANING
+    df['Labeling'] = df['Labeling'].astype(str).str.strip().str.capitalize()
+    df['Labeling'] = df['Labeling'].apply(lambda x: x if x in ["Positif", "Negatif"] else "Positif")
+
+    # DATE HANDLING
+    if 'Tanggal' in df.columns:
+        df['Tanggal'] = pd.to_datetime(df['Tanggal'], errors='coerce')
+        df['Tanggal'] = df['Tanggal'].ffill().bfill()
+        df['Tahun'] = df['Tanggal'].dt.year
+        df['Bulan'] = df['Tanggal'].dt.month
     else:
-        st.error("Kolom 'Labeling' tidak ditemukan!")
-        st.stop()
+        df['Tahun'] = 2024
+        df['Bulan'] = 1
 
-    # --- PERBAIKAN 2: Penanganan Waktu ---
-    tgl_cols = [c for c in df.columns if c.lower() == 'tanggal']
-    if tgl_cols:
-        col_tgl = tgl_cols[0]
-        df['Tanggal_Converted'] = pd.to_datetime(df[col_tgl].astype(str).str.strip(), errors='coerce')
-        df['Tanggal_Converted'] = df['Tanggal_Converted'].ffill().bfill()
-        df['Tahun'] = df['Tanggal_Converted'].dt.year
-        df['Bulan'] = df['Tanggal_Converted'].dt.month
-    else:
-        df['Tahun'] = df.get('Tahun', 2024)
-        df['Bulan'] = df.get('Bulan', 1)
+    bulan_map = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',
+                 7:'Jul',8:'Agu',9:'Sep',10:'Okt',11:'Nov',12:'Des'}
 
-    nama_bulan = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'Mei',6:'Jun',
-                  7:'Jul',8:'Agu',9:'Sep',10:'Okt',11:'Nov',12:'Des'}
-
-    # ==============================
-    # 4️⃣ Halaman Visualisasi
-    # ==============================
+    # =========================
+    # VISUALIZATION PAGE
+    # =========================
     if page == "📊 Visualisasi Data & Tren":
-        st.title("📊 Dashboard Analisis Sentimen Shopee")
-        
-        total_n = len(df) 
-        pos_n = len(df[df['Labeling']=='Positif'])
-        neg_n = len(df[df['Labeling']=='Negatif'])
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Ulasan", f"{total_n} 📄")
-        m2.metric("Sentimen Positif", f"{pos_n}", f"{(pos_n/total_n*100 if total_n>0 else 0):.1f}%")
-        m3.metric("Sentimen Negatif", f"{neg_n}", f"-{(neg_n/total_n*100 if total_n>0 else 0):.1f}%", delta_color="inverse")
-        st.divider()
 
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📅 Tren Bulanan", "📈 Tren Tahunan", "🔍 WordCloud", "🔎 Explore Data", "🎯 Validasi Rating"
-        ])
+        st.title("📊 Dashboard Sentimen Shopee")
+
+        total = len(df)
+        pos = len(df[df['Labeling']=="Positif"])
+        neg = len(df[df['Labeling']=="Negatif"])
+
+        c1,c2,c3 = st.columns(3)
+        c1.metric("Total", total)
+        c2.metric("Positif", pos)
+        c3.metric("Negatif", neg)
+
+        tab1, tab2 = st.tabs(["Trend", "WordCloud"])
 
         with tab1:
-            st.subheader("Grafik Garis Sentimen Bulanan")
-            years = sorted(df['Tahun'].dropna().unique())
-            if years:
-                filter_thn = st.selectbox("Pilih Tahun:", years, key='sb_thn')
-                df_thn = df[df['Tahun'] == filter_thn]
-                if not df_thn.empty:
-                    monthly_data = df_thn.groupby(['Bulan', 'Labeling']).size().reset_index(name='Jumlah')
-                    monthly_data['Nama Bulan'] = monthly_data['Bulan'].map(nama_bulan)
-                    
-                    fig_mon = px.line(monthly_data, x='Nama Bulan', y='Jumlah', color='Labeling', markers=True,
-                                      color_discrete_map={'Negatif':'#ff4b4b','Positif':'#00cc96'},
-                                      category_orders={"Nama Bulan": list(nama_bulan.values())})
-                    st.plotly_chart(fig_mon, use_container_width=True)
+            data = df.groupby(['Tahun','Labeling']).size().reset_index(name='Jumlah')
+            fig = px.bar(data, x="Tahun", y="Jumlah", color="Labeling", barmode="group")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            text = " ".join(df['stemming'].astype(str))
+            wc = WordCloud(width=800, height=400, stopwords=STOPWORDS).generate(text)
+
+            fig, ax = plt.subplots()
+            ax.imshow(wc)
+            ax.axis("off")
+            st.pyplot(fig)
+
+    # =========================
+    # MODEL PAGE (FIXED)
+    # =========================
+    elif page == "⚙️ Perhitungan Algoritma":
+
+        st.title("⚙️ Model Training")
+
+        tab1, tab2 = st.tabs(["Training", "TF-IDF"])
+
+        with tab1:
+
+            if st.button("Jalankan Model"):
+
+                X = df['stemming'].fillna("")
+                y = df['Labeling']
+
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y,
+                    test_size=0.2,
+                    random_state=42,
+                    stratify=y
+                )
+
+                tfidf = TfidfVectorizer(max_features=5000)
+                X_train = tfidf.fit_transform(X_train)
+                X_test = tfidf.transform(X_test)
+
+                models = {
+                    "Random Forest": RandomForestClassifier(
+                        n_estimators=100,
+                        random_state=42
+                    ),
+                    "SVM Linear": SVC(kernel="linear", random_state=42),
+                    "SVM RBF": SVC(kernel="rbf", random_state=42),
+                    "SVM Sigmoid": SVC(kernel="sigmoid", random_state=42)
+                }
+
+                result = []
+
+                for name, model in models.items():
+                    model.fit(X_train, y_train)
+                    pred = model.predict(X_test)
+
+                    acc = accuracy_score(y_test, pred)
+
+                    report = classification_report(y_test, pred, output_dict=True)
+
+                    result.append({
+                        "Model": name,
+                        "Accuracy": acc,
+                        "F1": report["Positif"]["f1-score"]
+                    })
+
+                    st.write("###", name)
+                    st.write("Accuracy:", acc)
+
+                st.dataframe(pd.DataFrame(result))
 
         with tab2:
             st.subheader("Tren Sentimen Tahunan")
